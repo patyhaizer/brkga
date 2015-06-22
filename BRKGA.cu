@@ -13,6 +13,7 @@
 #include <curand_kernel.h>
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
+#include <thrust/sort.h>
 
 #define CUDA_CALL(x) do { if((x)!=cudaSuccess) { \
     printf("Error at %s:%d\n",__FILE__,__LINE__);\
@@ -24,19 +25,23 @@
 using namespace std;
 
 struct Instance {
-    char m_alphabet[ALPHABET_SIZE + 1];
+    //char m_alphabet[ALPHABET_SIZE + 1];
     char m_instanceData[INSTANCE_SIZE][CHROMOSSOME_SIZE + 1];
 };
 
 struct Individual {
     double m_chromossome[CHROMOSSOME_SIZE];
-    //double m_hammingDistances[INSTANCE_SIZE];
     int m_fitness;
 };
 
+__host__ __device__
+bool operator < (const Individual& lhs, const Individual& rhs)
+{
+   return lhs.m_fitness < rhs.m_fitness;
+}
+
 struct Population {
     Individual m_chromossomes[BRKGA_pop_size];
-    unsigned m_size;
 };
 
 ///////////////////////////////// CUDA FUNCTIONS - BEGIN //////////////////////////////////////////////////////
@@ -48,46 +53,56 @@ char decodeAlele(const double& randomValue) {
     //     returnValue = t;
     // }
     // return returnValue;
-    if(randomValue <= 0.05){
-        return '0';
-    } else if(randomValue <= 0.10) {
-        return '1';
-    } else if(randomValue <= 0.15) {
-        return '2';
-    } else if(randomValue <= 0.20) {
-        return '3';
-    } else if(randomValue <= 0.25) {
-        return '4';
-    } else if(randomValue <= 0.30) {
-        return '5';
-    } else if(randomValue <= 0.35) {
-        return '6';
-    } else if(randomValue <= 0.40) {
-        return '7';
-    } else if(randomValue <= 0.45) {
-        return '8';
+    // if(randomValue <= 0.05){
+    //     return '0';
+    // } else if(randomValue <= 0.10) {
+    //     return '1';
+    // } else if(randomValue <= 0.15) {
+    //     return '2';
+    // } else if(randomValue <= 0.20) {
+    //     return '3';
+    // } else if(randomValue <= 0.25) {
+    //     return '4';
+    // } else if(randomValue <= 0.30) {
+    //     return '5';
+    // } else if(randomValue <= 0.35) {
+    //     return '6';
+    // } else if(randomValue <= 0.40) {
+    //     return '7';
+    // } else if(randomValue <= 0.45) {
+    //     return '8';
+    // } else if(randomValue <= 0.50) {
+    //     return '9';
+    // } else if(randomValue <= 0.55) {
+    //     return 'a';
+    // } else if(randomValue <= 0.60) {
+    //     return 'b';
+    // } else if(randomValue <= 0.65) {
+    //     return 'c';
+    // } else if(randomValue <= 0.70) {
+    //     return 'd';
+    // } else if(randomValue <= 0.75) {
+    //     return 'e';
+    // } else if(randomValue <= 0.80) {
+    //     return 'f';
+    // } else if(randomValue <= 0.85) {
+    //     return 'g';
+    // } else if(randomValue <= 0.90) {
+    //     return 'h';
+    // } else if(randomValue <= 0.95) {
+    //     return 'i';
+    // } else {
+    //     return 'j';
+    // }
+
+    if(randomValue <= 0.25){
+        return 'A';
     } else if(randomValue <= 0.50) {
-        return '9';
-    } else if(randomValue <= 0.55) {
-        return 'a';
-    } else if(randomValue <= 0.60) {
-        return 'b';
-    } else if(randomValue <= 0.65) {
-        return 'c';
-    } else if(randomValue <= 0.70) {
-        return 'd';
+        return 'C';
     } else if(randomValue <= 0.75) {
-        return 'e';
-    } else if(randomValue <= 0.80) {
-        return 'f';
-    } else if(randomValue <= 0.85) {
-        return 'g';
-    } else if(randomValue <= 0.90) {
-        return 'h';
-    } else if(randomValue <= 0.95) {
-        return 'i';
+        return 'G';
     } else {
-        return 'j';
+        return 'T';
     }
 }
 
@@ -97,8 +112,9 @@ void setupRand(curandState * state, unsigned long seed) {
     curand_init(seed, tid, 0, &state[tid]);
 }
 
-__global__ void genInitialPop(curandState* globalState, Population *pop) {
+__global__ void genInitialPop(curandState * globalState, Population *pop) {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
     int individualId = blockIdx.x;
     int aleloId = threadIdx.x;
     curandState localState = globalState[tid];
@@ -132,20 +148,49 @@ __global__ void evaluate(Population *pop, Instance * inst) {
                 individualFitness += chromossomeCost[i];
             }
             // Access global memory to do an atomic operation to uptade chromossome cost
-            // pop->m_chromossomes[individualId].m_hammingDistances[instanceId] = individualFitness;
             atomicMax(&(pop->m_chromossomes[individualId].m_fitness), individualFitness);
         }
     }
 }
 
-// __global__ void updateFitness(Population *pop) {
-//     int individualId = blockIdx.x;
-//     int aleloId = threadIdx.x;
+__global__ void generateNextPop(curandState * globalState, Population *prevPop, Population *nextPop) {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    curandState state = globalState[tid];
 
-//     if (threadIdx.x == 0) {
+    __shared__ int eliteId;
+    __shared__ int nonEliteId;
 
-//     }
-// }
+    int individualId = blockIdx.x;
+    int aleloId = threadIdx.x;
+
+    if (blockIdx.x < ELITE_SIZE) {
+        // then make the copy of the chromossome since it is an elite
+        nextPop->m_chromossomes[individualId].m_chromossome[aleloId] = prevPop->m_chromossomes[individualId].m_chromossome[aleloId];
+        nextPop->m_chromossomes[individualId].m_fitness = 0;
+    } else if (blockIdx.x < ELITE_SIZE + MUTANT_SIZE) {
+        // generate mutant individuals
+        double random = curand_uniform_double(&state);
+        nextPop->m_chromossomes[individualId].m_chromossome[aleloId] = random;
+        nextPop->m_chromossomes[individualId].m_fitness = 0;
+    } else {
+        // Only thread 0 calculates the individuals which will crossover
+        // The individuals are the same for the whole block - one block is one chromossome
+        if (threadIdx.x == 0) {
+            // create offspring
+            // 1 - choose one elite individual
+            eliteId = (int) (curand_uniform(&state) * (ELITE_SIZE - 1));
+            // 2 - choose non-elite individual
+            nonEliteId = (int) ((((BRKGA_pop_size - 1) - ELITE_SIZE) * curand_uniform(&state)) + ELITE_SIZE);
+        }
+        __syncthreads();
+        int isElite = (curand_uniform(&state) < rhoe);
+        nextPop->m_chromossomes[individualId].m_chromossome[aleloId] = isElite ?
+                                                        prevPop->m_chromossomes[eliteId].m_chromossome[aleloId] :
+                                                        prevPop->m_chromossomes[nonEliteId].m_chromossome[aleloId];
+        nextPop->m_chromossomes[individualId].m_fitness = 0;
+    }
+    globalState[tid] = state;
+}
 
 ///////////////////////////////// CUDA FUNCTIONS - END ///////////////////////////////////////////////////////
 
@@ -157,8 +202,8 @@ void loadFromFile(std::vector<string>& instanceData) {
 
     //ARQUIVOS DE INSTÂNCIAS A SEREM UTILIZADOS
     std::vector<string> instance_name;
-    instance_name.push_back("t20-10-500-1");
-
+    //instance_name.push_back("t20-10-500-1");
+    instance_name.push_back("n10m500tai1");
     // carregar o arquvio com as instâncias
     string tmp_name(instance_dir + instance_name[0] + ".txt");
     char * filename = new char[tmp_name.size() + 1];
@@ -196,6 +241,12 @@ void printInitialPopulation(Population * pop) {
     }
 }
 
+void printSortedPopulation(Population * pop) {
+    for (int i = 0; i < BRKGA_pop_size; ++i) {
+        printf("Chromossome: %d - Fitness: %d\n", i, pop->m_chromossomes[i].m_fitness);
+    }
+}
+
 int main(int argc, char **argv) {
     clock_t start,end;
     start=clock();
@@ -203,8 +254,8 @@ int main(int argc, char **argv) {
     loadFromFile(tmpInstanceData);
     assert(tmpInstanceData.size() == INSTANCE_SIZE);
 
-    char h_alphabet[ALPHABET_SIZE +1];
-    strcpy(h_alphabet, "0123456789abcdefghij");
+    //char h_alphabet[ALPHABET_SIZE +1];
+    //strcpy(h_alphabet, "0123456789abcdefghij");
 
     // convert string vector into char
     char instanceData[INSTANCE_SIZE][CHROMOSSOME_SIZE + 1];
@@ -217,11 +268,11 @@ int main(int argc, char **argv) {
     Instance * h_instance;
     h_pop = (struct Population *)calloc(1,sizeof(struct Population));
     h_instance = (struct Instance *)calloc(1,sizeof(struct Instance));
-    memcpy(h_instance->m_alphabet, h_alphabet, ALPHABET_SIZE+1);
+    //memcpy(h_instance->m_alphabet, h_alphabet, ALPHABET_SIZE+1);
     memcpy(h_instance->m_instanceData, instanceData, INSTANCE_SIZE * (CHROMOSSOME_SIZE + 1) * sizeof(char));
 
     // GPU variables
-    Population * d_pop;
+    Population * d_pop, *d_popPrevious;
     curandState* devStates;
     Instance * d_instance;
 
@@ -229,19 +280,40 @@ int main(int argc, char **argv) {
 
     CUDA_CALL(cudaMalloc((void **)&devStates, (NUM_BLOCKS * NUM_THREADS) *sizeof(curandState)));
     CUDA_CALL(cudaMalloc((void **)&d_pop, sizeof(Population)));
+    CUDA_CALL(cudaMalloc((void **)&d_popPrevious, sizeof(Population)));
     CUDA_CALL(cudaMalloc((void **)&d_instance, sizeof(Instance)));
 
     // copying CPU values to GPU values
     CUDA_CALL(cudaMemcpy(d_instance, h_instance, sizeof(Instance), cudaMemcpyHostToDevice));
 
-    setupRand <<<NUM_BLOCKS, NUM_THREADS >>> (devStates, time(NULL));
+    // Generate Initial Population
+    //setupRand <<<NUM_BLOCKS, NUM_THREADS >>> (devStates, time(NULL));
     genInitialPop <<<NUM_BLOCKS, NUM_THREADS>>> (devStates, d_pop);
-    evaluate <<<nblocks, NUM_THREADS>>>(d_pop, d_instance);
+    //genInitialPop <<<NUM_BLOCKS, NUM_THREADS>>> (d_pop);
+    int i = 0;
+    while (true) {
+        evaluate <<<nblocks, NUM_THREADS>>>(d_pop, d_instance);
+        // Sort chromossomes by fitness
+        thrust::device_ptr<Individual> t_chromossomes(d_pop->m_chromossomes);
+        thrust::sort(t_chromossomes, t_chromossomes + BRKGA_pop_size);
+        //CUDA_CALL(cudaMemcpy(h_pop, d_pop, sizeof(Population), cudaMemcpyDeviceToHost));
+        //printf("iteration: %d - best chromossome: %d\n", i, h_pop->m_chromossomes[0].m_fitness);
+        // If end criteria was reached end execution
+        if (i >= 100) break;
+        // Generate next Population
+        // First copy the current pop to previous:
+        CUDA_CALL(cudaMemcpy(d_popPrevious, d_pop, sizeof(Population), cudaMemcpyDeviceToDevice));
+        // call kernel to generate new population
+        generateNextPop <<<NUM_BLOCKS, NUM_THREADS>>>(devStates, d_popPrevious, d_pop);
+        ++i;
+    }
+
     CUDA_CALL(cudaMemcpy(h_pop, d_pop, sizeof(Population), cudaMemcpyDeviceToHost));
-    DEBUG_BRKGA(printInitialPopulation(h_pop);)
+    DEBUG_BRKGA(printSortedPopulation(h_pop);)
 
     // Free GPU memory
     CUDA_CALL(cudaFree(d_pop));
+    CUDA_CALL(cudaFree(d_popPrevious));
     CUDA_CALL(cudaFree(devStates));
     CUDA_CALL(cudaFree(d_instance));
     // Free CPU memory
