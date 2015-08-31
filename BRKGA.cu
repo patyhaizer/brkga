@@ -256,10 +256,11 @@ float average(Population * pop){
 }
 
 int main(int argc, char **argv) {
-    cudaEvent_t start, stop;
+    cudaEvent_t start, stop, randomTime;
     float elapsedTime;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
+    cudaEventCreate(&randomTime);
     cudaEventRecord(start, 0);
 
     std::vector<string> tmpInstanceData;
@@ -284,7 +285,7 @@ int main(int argc, char **argv) {
     memcpy(h_instance->m_instanceData, instanceData, INSTANCE_SIZE * (CHROMOSSOME_SIZE + 1) * sizeof(char));
 
     // GPU variables
-    Population ** d_pop, *d_popPrevious;
+    Population * d_pop, *d_popPrevious;
     curandState* devStates;
     Instance * d_instance;
 
@@ -300,6 +301,10 @@ int main(int argc, char **argv) {
 
     // Generate Initial Population
     setupRand <<<NUM_BLOCKS, NUM_THREADS >>> (devStates, time(NULL));
+    cudaEventRecord(randomTime, 0);
+    cudaEventSynchronize(randomTime);
+    cudaEventElapsedTime(&elapsedTime, start, randomTime);
+    std::cout << "Time to generate random value: " << (elapsedTime/1000) << std::endl;
     genInitialPop <<<NUM_BLOCKS, NUM_THREADS>>> (devStates, d_pop);
     //time_t TStop = time(NULL), TStart = time(NULL);
     int i = 0;
@@ -342,7 +347,7 @@ int main(int argc, char **argv) {
     cudaEventElapsedTime(&elapsedTime, start, stop);
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
-    std::cout << "   " << elapsedTime << std::endl;
+    std::cout << "   " << (elapsedTime/1000) << std::endl;
     //printf ("Your calculations took %.15lf seconds to run.\n", dif );
     return 0;
 }
