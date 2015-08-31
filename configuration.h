@@ -9,6 +9,7 @@
 
 #define NUM_BLOCKS BRKGA_pop_size
 #define NUM_THREADS 500
+#define EXECUTION_TIME 300
 
 #define DEBUG_BRKGA(code) if (1) { code }
 

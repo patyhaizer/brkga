@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <sstream>
 #include <assert.h>
+#include <time.h>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -53,57 +54,57 @@ char decodeAlele(const double& randomValue) {
     //     returnValue = t;
     // }
     // return returnValue;
-    // if(randomValue <= 0.05){
-    //     return '0';
-    // } else if(randomValue <= 0.10) {
-    //     return '1';
-    // } else if(randomValue <= 0.15) {
-    //     return '2';
-    // } else if(randomValue <= 0.20) {
-    //     return '3';
-    // } else if(randomValue <= 0.25) {
-    //     return '4';
-    // } else if(randomValue <= 0.30) {
-    //     return '5';
-    // } else if(randomValue <= 0.35) {
-    //     return '6';
-    // } else if(randomValue <= 0.40) {
-    //     return '7';
-    // } else if(randomValue <= 0.45) {
-    //     return '8';
-    // } else if(randomValue <= 0.50) {
-    //     return '9';
-    // } else if(randomValue <= 0.55) {
-    //     return 'a';
-    // } else if(randomValue <= 0.60) {
-    //     return 'b';
-    // } else if(randomValue <= 0.65) {
-    //     return 'c';
-    // } else if(randomValue <= 0.70) {
-    //     return 'd';
-    // } else if(randomValue <= 0.75) {
-    //     return 'e';
-    // } else if(randomValue <= 0.80) {
-    //     return 'f';
-    // } else if(randomValue <= 0.85) {
-    //     return 'g';
-    // } else if(randomValue <= 0.90) {
-    //     return 'h';
-    // } else if(randomValue <= 0.95) {
-    //     return 'i';
-    // } else {
-    //     return 'j';
-    // }
-
-    if(randomValue <= 0.25){
-        return 'A';
+    if(randomValue <= 0.05){
+        return '0';
+    } else if(randomValue <= 0.10) {
+        return '1';
+    } else if(randomValue <= 0.15) {
+        return '2';
+    } else if(randomValue <= 0.20) {
+        return '3';
+    } else if(randomValue <= 0.25) {
+        return '4';
+    } else if(randomValue <= 0.30) {
+        return '5';
+    } else if(randomValue <= 0.35) {
+        return '6';
+    } else if(randomValue <= 0.40) {
+        return '7';
+    } else if(randomValue <= 0.45) {
+        return '8';
     } else if(randomValue <= 0.50) {
-        return 'C';
+        return '9';
+    } else if(randomValue <= 0.55) {
+        return 'a';
+    } else if(randomValue <= 0.60) {
+        return 'b';
+    } else if(randomValue <= 0.65) {
+        return 'c';
+    } else if(randomValue <= 0.70) {
+        return 'd';
     } else if(randomValue <= 0.75) {
-        return 'G';
+        return 'e';
+    } else if(randomValue <= 0.80) {
+        return 'f';
+    } else if(randomValue <= 0.85) {
+        return 'g';
+    } else if(randomValue <= 0.90) {
+        return 'h';
+    } else if(randomValue <= 0.95) {
+        return 'i';
     } else {
-        return 'T';
+        return 'j';
     }
+
+    // if(randomValue <= 0.25){
+    //     return 'A';
+    // } else if(randomValue <= 0.50) {
+    //     return 'C';
+    // } else if(randomValue <= 0.75) {
+    //     return 'G';
+    // } else {
+    //     return 'T';
+    // }
 }
 
 __global__
@@ -192,23 +193,22 @@ __global__ void generateNextPop(curandState * globalState, Population *prevPop, 
     globalState[tid] = state;
 }
 
+
 ///////////////////////////////// CUDA FUNCTIONS - END ///////////////////////////////////////////////////////
 
 
 void loadFromFile(std::vector<string>& instanceData) {
     //COLOQUE AQUI O ARQUIVO QUE CONTÉM A INSTÂNCIA QUE PRETENDE EXECUTAR
     string instance_dir = "/home/lapo/mfonseca/Documents/Patricia/Instance/20caracteres/";
-    //string output_dir = "/Users/PatriciaHaizer/Documents/Instance/20caracteres/Result/";
 
     //ARQUIVOS DE INSTÂNCIAS A SEREM UTILIZADOS
     std::vector<string> instance_name;
-    //instance_name.push_back("t20-10-500-1");
-    instance_name.push_back("n10m500tai1");
+    instance_name.push_back("t20-10-500-1");
+    //instance_name.push_back("n10m500tai1");
     // carregar o arquvio com as instâncias
     string tmp_name(instance_dir + instance_name[0] + ".txt");
     char * filename = new char[tmp_name.size() + 1];
     strcpy(filename, tmp_name.c_str());
-    //string file_out = output_dir + "BRKGA_" + instance_name[0] + ".txt";
 
     std::vector<int> max, min, avg;
 
@@ -247,9 +247,21 @@ void printSortedPopulation(Population * pop) {
     }
 }
 
+float average(Population * pop){
+    int sum = 0;
+    for (int i = 0; i < BRKGA_pop_size; ++i) {
+        sum += pop->m_chromossomes[i].m_fitness;
+    }
+    return sum/BRKGA_pop_size;
+}
+
 int main(int argc, char **argv) {
-    clock_t start,end;
-    start=clock();
+    cudaEvent_t start, stop;
+    float elapsedTime;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start, 0);
+
     std::vector<string> tmpInstanceData;
     loadFromFile(tmpInstanceData);
     assert(tmpInstanceData.size() == INSTANCE_SIZE);
@@ -272,7 +284,7 @@ int main(int argc, char **argv) {
     memcpy(h_instance->m_instanceData, instanceData, INSTANCE_SIZE * (CHROMOSSOME_SIZE + 1) * sizeof(char));
 
     // GPU variables
-    Population * d_pop, *d_popPrevious;
+    Population ** d_pop, *d_popPrevious;
     curandState* devStates;
     Instance * d_instance;
 
@@ -287,9 +299,9 @@ int main(int argc, char **argv) {
     CUDA_CALL(cudaMemcpy(d_instance, h_instance, sizeof(Instance), cudaMemcpyHostToDevice));
 
     // Generate Initial Population
-    //setupRand <<<NUM_BLOCKS, NUM_THREADS >>> (devStates, time(NULL));
+    setupRand <<<NUM_BLOCKS, NUM_THREADS >>> (devStates, time(NULL));
     genInitialPop <<<NUM_BLOCKS, NUM_THREADS>>> (devStates, d_pop);
-    //genInitialPop <<<NUM_BLOCKS, NUM_THREADS>>> (d_pop);
+    //time_t TStop = time(NULL), TStart = time(NULL);
     int i = 0;
     while (true) {
         evaluate <<<nblocks, NUM_THREADS>>>(d_pop, d_instance);
@@ -297,20 +309,26 @@ int main(int argc, char **argv) {
         thrust::device_ptr<Individual> t_chromossomes(d_pop->m_chromossomes);
         thrust::sort(t_chromossomes, t_chromossomes + BRKGA_pop_size);
         //CUDA_CALL(cudaMemcpy(h_pop, d_pop, sizeof(Population), cudaMemcpyDeviceToHost));
-        //printf("iteration: %d - best chromossome: %d\n", i, h_pop->m_chromossomes[0].m_fitness);
+        //cout << "iteration " << i << ": " << h_pop->m_chromossomes[0].m_fitness << std::endl;
+        //float avg = average(h_pop);
         // If end criteria was reached end execution
-        if (i >= 100) break;
+        //if ((TStop - TStart) > EXECUTION_TIME) break;
+        if (i >= 500) break;
         // Generate next Population
         // First copy the current pop to previous:
         CUDA_CALL(cudaMemcpy(d_popPrevious, d_pop, sizeof(Population), cudaMemcpyDeviceToDevice));
         // call kernel to generate new population
         generateNextPop <<<NUM_BLOCKS, NUM_THREADS>>>(devStates, d_popPrevious, d_pop);
+        //TStop = time(NULL);
         ++i;
     }
 
     CUDA_CALL(cudaMemcpy(h_pop, d_pop, sizeof(Population), cudaMemcpyDeviceToHost));
-    DEBUG_BRKGA(printSortedPopulation(h_pop);)
-
+    std::cout << h_pop->m_chromossomes[0].m_fitness;
+    //DEBUG_BRKGA(printSortedPopulation(h_pop);)
+    //float avg = average(h_pop);
+    //printf("Best chromossome: %d - Average: %.2f - Worst chromossome: %d\n",h_pop->m_chromossomes[0].m_fitness, avg, h_pop->m_chromossomes[BRKGA_pop_size-1].m_fitness);
+    //printf("\n");
     // Free GPU memory
     CUDA_CALL(cudaFree(d_pop));
     CUDA_CALL(cudaFree(d_popPrevious));
@@ -319,8 +337,12 @@ int main(int argc, char **argv) {
     // Free CPU memory
     free (h_pop);
     free (h_instance);
-    end=clock();
-    double dif = ((double) (end - start)) / CLOCKS_PER_SEC ;
-    printf ("Your calculations took %.15lf seconds to run.\n", dif );
+    cudaEventRecord(stop, 0);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&elapsedTime, start, stop);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    std::cout << "   " << elapsedTime << std::endl;
+    //printf ("Your calculations took %.15lf seconds to run.\n", dif );
     return 0;
 }
